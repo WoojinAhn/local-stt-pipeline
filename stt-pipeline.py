@@ -43,6 +43,21 @@ def parse_args(argv=None):
     parser.add_argument(
         "--language", default=None, help="Override the language passed to the model"
     )
+    parser.add_argument(
+        "--silence-ms",
+        type=int,
+        default=900,
+        help="Silence (ms) that ends an utterance (default: 900; higher = fuller sentences, more latency)",
+    )
+    parser.add_argument(
+        "--vad-threshold", type=float, default=0.5, help="VAD speech probability threshold (default: 0.5)"
+    )
+    parser.add_argument(
+        "--min-utterance-ms",
+        type=int,
+        default=300,
+        help="Drop utterances shorter than this (default: 300)",
+    )
     parser.add_argument("--output-dir", default="outputs/stt", help="Where to save transcripts")
     parser.add_argument("--no-save", action="store_true", help="Do not save a transcript file")
     return parser.parse_args(argv)
@@ -54,8 +69,11 @@ def main():
 
     spec = resolve_engine(args.engine, args.model, args.language)
     console.print(f"[cyan]loading[/cyan] {spec.tier} engine: {spec.model_id} …")
-    vad = StreamingVad(load_vad(VAD_MODEL), ServerVadConfig())
-    segmenter = UtteranceSegmenter(vad)
+    vad = StreamingVad(
+        load_vad(VAD_MODEL),
+        ServerVadConfig(threshold=args.vad_threshold, silence_duration_ms=args.silence_ms),
+    )
+    segmenter = UtteranceSegmenter(vad, min_utterance_ms=args.min_utterance_ms)
     transcriber = Transcriber(spec)
     writer = TranscriptWriter(args.output_dir, enabled=not args.no_save)
 

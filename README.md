@@ -49,8 +49,14 @@ python3 stt-pipeline.py --no-save    # 파일 저장 없이 터미널만
 | `--engine` | `low` | STT 티어 (`high`/`mid`/`low`) |
 | `--model` | — | 티어 모델 ID 덮어쓰기 (티어의 패밀리 유지) |
 | `--language` | — | 모델에 전달할 언어 덮어쓰기 |
+| `--silence-ms` | `900` | 발화를 끊는 침묵 길이(ms). 클수록 문장이 온전, 지연↑ |
+| `--vad-threshold` | `0.5` | VAD 음성 감지 임계값 |
+| `--min-utterance-ms` | `300` | 이보다 짧은 발화는 버림 |
 | `--output-dir` | `outputs/stt` | 전사 파일 저장 위치 |
 | `--no-save` | — | 파일 저장 안 함 |
+
+> 문장이 토막나면 `--silence-ms`를 1100~1300으로 올리세요. Whisper/Qwen은 문맥이
+> 길수록 정확해집니다(침묵 대기가 짧으면 한 문장이 여러 조각으로 쪼개져 품질 저하).
 
 ### 엔진 티어 (`--engine`)
 
@@ -121,8 +127,15 @@ python3 stt-pipeline.py --no-save     # terminal only, no file
 | `--engine` | `low` | STT tier (`high`/`mid`/`low`) |
 | `--model` | — | Override the tier's model id (keeps the tier's family) |
 | `--language` | — | Override the language passed to the model |
+| `--silence-ms` | `900` | Silence (ms) that ends an utterance; higher = fuller sentences, more latency |
+| `--vad-threshold` | `0.5` | VAD speech-probability threshold |
+| `--min-utterance-ms` | `300` | Drop utterances shorter than this |
 | `--output-dir` | `outputs/stt` | Where transcripts are saved |
 | `--no-save` | — | Do not save a file |
+
+> If sentences get fragmented, raise `--silence-ms` to 1100–1300. Whisper/Qwen are
+> more accurate with longer context (a short silence window splits one sentence
+> into pieces and lowers quality).
 
 ### Engine tiers (`--engine`)
 
