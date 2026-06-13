@@ -38,9 +38,10 @@ glue: mic capture (`sounddevice`, which mlx-audio lacks) + VAD segmentation loop
 
 ## Key Files
 
-- `stt-pipeline.py`: CLI entry — args, mic capture thread, main loop, Rich render.
+- `stt-pipeline.py`: CLI entry — args (`--engine`/`--model`/`--language`/...), mic capture thread, main loop, Rich render.
+- `engines.py`: `EngineSpec` registry + `resolve_engine` — `--engine` tiers (high=Qwen3-ASR-1.7B, mid=whisper-large-v3, low=whisper-large-v3-turbo). Unit-tested, model-free.
 - `segmenter.py`: `UtteranceSegmenter` — StreamingVad turn events → utterance buffers (unit-tested with an injected fake VAD).
-- `transcriber.py`: `Transcriber` — loads Whisper once, `model.generate` per utterance (avoids `generate_transcription`'s per-call file write).
+- `transcriber.py`: `Transcriber` — loads the engine's model once, `model.generate` per utterance (avoids `generate_transcription`'s per-call file write). Family-aware: whisper needs a `WhisperProcessor` injection; qwen3_asr loads standalone.
 - `writer.py`: `TranscriptWriter` — lazy-create + append/flush each line.
 - `tests/`: unit tests for the segmenter and writer (model-free).
 - `docs/superpowers/`: specs and plans.
@@ -72,6 +73,10 @@ precede the issue; implementation follows it.
 
 ## Known Issues
 
+- Engine tiers verified end-to-end: `low` (turbo) and `high` (Qwen3-ASR-1.7B).
+  `mid` (whisper-large-v3-mlx) shares the `low` whisper code path and a
+  confirmed-existing repo id, but its first download was environmentally flaky
+  (HF stalls); it downloads/verifies on first real use. `HF_TOKEN` recommended.
 - Custom `--model` uses the fixed `openai/whisper-large-v3-turbo` processor
   fallback; a model with a different tokenizer would need processor handling
   derived from its own id.
