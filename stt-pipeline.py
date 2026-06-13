@@ -17,8 +17,9 @@ from rich.markup import escape
 
 from mlx_audio.realtime_vad import ServerVadConfig, StreamingVad
 from mlx_audio.vad import load as load_vad
+from engines import DEFAULT_ENGINE, ENGINES, resolve_engine
 from segmenter import VAD_SAMPLE_RATE, UtteranceSegmenter
-from transcriber import DEFAULT_MODEL, Transcriber
+from transcriber import Transcriber
 from writer import TranscriptWriter
 
 VAD_MODEL = "mlx-community/silero-vad"
@@ -27,8 +28,21 @@ BLOCK_SIZE = 1600  # 100 ms chunks at 16 kHz
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Real-time Korean speech-to-text")
-    parser.add_argument("--language", default="ko", help="Language code (default: ko)")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="STT model id")
+    parser.add_argument(
+        "--engine",
+        default=DEFAULT_ENGINE,
+        choices=sorted(ENGINES),
+        help=(
+            f"STT tier (default: {DEFAULT_ENGINE}). "
+            "high=Qwen3-ASR-1.7B, mid=whisper-large-v3, low=whisper-large-v3-turbo"
+        ),
+    )
+    parser.add_argument(
+        "--model", default=None, help="Override the tier's model id (keeps the tier's family)"
+    )
+    parser.add_argument(
+        "--language", default=None, help="Override the language passed to the model"
+    )
     parser.add_argument("--output-dir", default="outputs/stt", help="Where to save transcripts")
     parser.add_argument("--no-save", action="store_true", help="Do not save a transcript file")
     return parser.parse_args(argv)
@@ -38,10 +52,11 @@ def main():
     args = parse_args()
     console = Console()
 
-    console.print("[cyan]loading model…[/cyan]")
+    spec = resolve_engine(args.engine, args.model, args.language)
+    console.print(f"[cyan]loading[/cyan] {spec.tier} engine: {spec.model_id} …")
     vad = StreamingVad(load_vad(VAD_MODEL), ServerVadConfig())
     segmenter = UtteranceSegmenter(vad)
-    transcriber = Transcriber(args.model, args.language)
+    transcriber = Transcriber(spec)
     writer = TranscriptWriter(args.output_dir, enabled=not args.no_save)
 
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()

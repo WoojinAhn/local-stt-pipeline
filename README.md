@@ -40,15 +40,28 @@ pip install -r requirements.txt
 
 ```bash
 python3 stt-pipeline.py              # 실시간 받아쓰기 시작, Ctrl+C로 종료
+python3 stt-pipeline.py --engine high  # 최고 정확도(Qwen3-ASR)
 python3 stt-pipeline.py --no-save    # 파일 저장 없이 터미널만
 ```
 
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
-| `--language` | `ko` | 언어 코드 |
-| `--model` | `mlx-community/whisper-large-v3-turbo` | STT 모델 ID |
+| `--engine` | `low` | STT 티어 (`high`/`mid`/`low`) |
+| `--model` | — | 티어 모델 ID 덮어쓰기 (티어의 패밀리 유지) |
+| `--language` | — | 모델에 전달할 언어 덮어쓰기 |
 | `--output-dir` | `outputs/stt` | 전사 파일 저장 위치 |
 | `--no-save` | — | 파일 저장 안 함 |
+
+### 엔진 티어 (`--engine`)
+
+정확도 사다리입니다. ASR 정확도는 작은 크기에서 포화되므로 티어는 모델 크기가
+아니라 **모델 패밀리/품질**로 나뉩니다. 첫 실행 시 해당 모델을 내려받습니다.
+
+| 티어 | 모델 | 성격 |
+|------|------|------|
+| `high` (상) | Qwen3-ASR-1.7B | 2026 SOTA, 최고 정확도 |
+| `mid` (중) | Whisper large-v3 (full) | 검증된 정확도 |
+| `low` (하, 기본) | Whisper large-v3-turbo | 가장 빠름 |
 
 ### 출력
 
@@ -98,16 +111,30 @@ pip install -r requirements.txt
 ### Usage
 
 ```bash
-python3 stt-pipeline.py              # start real-time transcription, Ctrl+C to stop
-python3 stt-pipeline.py --no-save    # terminal only, no file
+python3 stt-pipeline.py               # start real-time transcription, Ctrl+C to stop
+python3 stt-pipeline.py --engine high # highest accuracy (Qwen3-ASR)
+python3 stt-pipeline.py --no-save     # terminal only, no file
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--language` | `ko` | Language code |
-| `--model` | `mlx-community/whisper-large-v3-turbo` | STT model id |
+| `--engine` | `low` | STT tier (`high`/`mid`/`low`) |
+| `--model` | — | Override the tier's model id (keeps the tier's family) |
+| `--language` | — | Override the language passed to the model |
 | `--output-dir` | `outputs/stt` | Where transcripts are saved |
 | `--no-save` | — | Do not save a file |
+
+### Engine tiers (`--engine`)
+
+An accuracy ladder. ASR accuracy saturates at small model sizes, so tiers differ
+by model family/quality, not parameter count. The selected model is downloaded on
+first use.
+
+| Tier | Model | Profile |
+|------|-------|---------|
+| `high` | Qwen3-ASR-1.7B | 2026 SOTA, highest accuracy |
+| `mid` | Whisper large-v3 (full) | proven accuracy |
+| `low` (default) | Whisper large-v3-turbo | fastest |
 
 ### Output
 
