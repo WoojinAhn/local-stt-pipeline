@@ -18,6 +18,7 @@ from rich.markup import escape
 from mlx_audio.realtime_vad import ServerVadConfig, StreamingVad
 from mlx_audio.vad import load as load_vad
 from engines import DEFAULT_ENGINE, ENGINES, resolve_engine
+from audio_writer import AudioWriter
 from segmenter import VAD_SAMPLE_RATE, UtteranceSegmenter
 from transcriber import Transcriber
 from writer import TranscriptWriter
@@ -60,6 +61,11 @@ def parse_args(argv=None):
     )
     parser.add_argument("--output-dir", default="outputs/stt", help="Where to save transcripts")
     parser.add_argument("--no-save", action="store_true", help="Do not save a transcript file")
+    parser.add_argument(
+        "--save-audio",
+        action="store_true",
+        help="Also save the raw session audio as <ts>.wav (16kHz mono, ~1.9MB/min)",
+    )
     return parser.parse_args(argv)
 
 
@@ -75,7 +81,11 @@ def main():
     )
     segmenter = UtteranceSegmenter(vad, min_utterance_ms=args.min_utterance_ms)
     transcriber = Transcriber(spec)
-    writer = TranscriptWriter(args.output_dir, enabled=not args.no_save)
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    writer = TranscriptWriter(args.output_dir, enabled=not args.no_save, stamp=stamp)
+    audio_writer = AudioWriter(
+        args.output_dir, VAD_SAMPLE_RATE, enabled=args.save_audio, stamp=stamp
+    )
 
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
 
@@ -95,6 +105,7 @@ def main():
         ):
             while True:
                 samples = audio_q.get()
+                audio_writer.write(samples)
                 for utterance in segmenter.feed(samples):
                     text = transcriber.transcribe(utterance)
                     if text:
@@ -109,9 +120,12 @@ def main():
         sys.exit(1)
     finally:
         writer.close()
+        audio_writer.close()
 
     if writer.path:
         console.print(f"[green]saved:[/green] {writer.path}")
+    if audio_writer.path:
+        console.print(f"[green]audio:[/green] {audio_writer.path}")
 
 
 if __name__ == "__main__":

@@ -54,6 +54,7 @@ python3 stt-pipeline.py --no-save    # 파일 저장 없이 터미널만
 | `--min-utterance-ms` | `300` | 이보다 짧은 발화는 버림 |
 | `--output-dir` | `outputs/stt` | 전사 파일 저장 위치 |
 | `--no-save` | — | 파일 저장 안 함 |
+| `--save-audio` | — | 원본 음성도 `<날짜>.wav`로 저장 (16kHz 모노, ~1.9MB/분) |
 
 > 문장이 토막나면 `--silence-ms`를 1100~1300으로 올리세요. Whisper/Qwen은 문맥이
 > 길수록 정확해집니다(침묵 대기가 짧으면 한 문장이 여러 조각으로 쪼개져 품질 저하).
@@ -132,6 +133,7 @@ python3 stt-pipeline.py --no-save     # terminal only, no file
 | `--min-utterance-ms` | `300` | Drop utterances shorter than this |
 | `--output-dir` | `outputs/stt` | Where transcripts are saved |
 | `--no-save` | — | Do not save a file |
+| `--save-audio` | — | Also save the raw audio as `<ts>.wav` (16kHz mono, ~1.9MB/min) |
 
 > If sentences get fragmented, raise `--silence-ms` to 1100–1300. Whisper/Qwen are
 > more accurate with longer context (a short silence window splits one sentence
