@@ -1,38 +1,59 @@
 # STT Pipeline Design (`stt-pipeline.py`)
 
 **Date:** 2026-06-13
-**Status:** Approved design, pending implementation plan
+**Status:** Approved design (revised after OSS research), pending implementation plan
 
 ## Goal
 
-Add a third pipeline to the local LLM project: real-time Korean speech-to-text
-(transcription only, no LLM analysis chain). Microphone input is segmented by
-voice-activity detection, each utterance is transcribed with mlx-whisper, printed
-live to the terminal, and the full session is saved to a text file on exit.
+A thin, programmable wrapper for real-time Korean speech-to-text. Microphone
+input is segmented by voice-activity detection, each utterance is transcribed
+with Whisper via the `mlx-audio` library, printed live to the terminal, and the
+full session is saved to a timestamped text file on exit. Transcription only —
+no LLM analysis chain.
+
+## "Don't reinvent the wheel" — what we reuse vs. build
+
+OSS research (2026-06-13) confirmed the engine + VAD + streaming layers already
+exist. We build a **thin wrapper**, not the engine.
+
+**Reused from `mlx-audio`** (Blaizzy, 7.3k★, actively maintained, MIT):
+- Whisper transcription engine (`generate_transcription`), Metal GPU accelerated.
+- **MLX-native silero-vad** (`mlx-community/silero-vad`) — eliminates the PyTorch
+  (~2GB) dependency the original from-scratch design required.
+
+**We build (thin):**
+- Microphone capture (mlx-audio has no mic input API) via `sounddevice`.
+- The glue loop: mic frames → VAD utterance segmentation → transcription → Rich
+  live output → session save.
+
+Alternatives considered and rejected: RealtimeSTT (9.9k★ but no MLX/Metal on Mac,
+faster-whisper CPU only); Realtime_mlx_STT (exact match but 7★ / ~1yr stale);
+finished apps Handy/VoiceInk (different UX — dictation into apps, not a
+session-transcript pipeline); from-scratch (reinvents mlx-audio).
 
 ## Scope decisions (locked)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Purpose | Pure transcription (no LLM chain) | Standalone receiving/dictation tool |
-| Engine | **mlx-whisper** | MLX-native, Metal GPU accel on Apple Silicon; ecosystem-consistent with mlx-lm/mlx-vlm. faster-whisper (CTranslate2) runs CPU-only on Mac. |
-| Input | Real-time microphone streaming | |
-| Streaming strategy | **VAD utterance-segmented** | Whisper is not a true streaming model (30s window). VAD detects speech boundaries; each completed utterance is transcribed. Stable text, 1–3s latency. |
-| VAD library | **silero-vad** | Higher Korean/noise accuracy. Accepts PyTorch (~2GB) dependency as a deliberate trade-off over lightweight webrtcvad. |
+| Purpose | Pure transcription (no LLM chain) | Standalone dictation/transcription tool |
+| Base library | **mlx-audio** | Maintained MLX-native STT + VAD; avoids reinvention; torch-free VAD |
+| Engine | **Whisper large-v3-turbo** (`mlx-community/whisper-large-v3-turbo-asr-fp16`) | Proven Korean accuracy. (Voxtral Realtime considered for native streaming but less Korean track record.) |
+| Streaming strategy | **VAD utterance-segmented** | Whisper is batch (30s window), not streaming. VAD segments speech; each completed utterance transcribed. 1–3s latency, stable text. |
+| VAD | **mlx-audio's MLX silero-vad** | MLX-native, no PyTorch dependency |
+| Mic capture | **sounddevice** | mlx-audio provides no microphone input |
 | Output | Terminal (live) + file save | `.txt` with timestamps to `outputs/stt/` |
-| Model | `mlx-community/whisper-large-v3-mlx` (4bit, ~1.5GB) | Korean accuracy/size balance |
-| Target HW | Apple Silicon (M5 Max / 128GB assumed) | mlx-whisper install is uniform across Apple Silicon |
+| Target HW | Apple Silicon (M5 Max / 128GB assumed) | mlx-audio is Metal-accelerated on Apple Silicon |
 
 ## Architecture
 
 ```
 [mic] --sounddevice (16kHz mono)--> [frame queue]
                                           |
-                                  VADIterator (silero-vad)
+                          mlx-audio silero-vad (utterance boundaries)
                                           |
                                   utterance audio buffer (float32)
                                           |
-                          mlx_whisper.transcribe(buf, language="ko")
+                  mlx_audio.stt.generate.generate_transcription(buf, language="ko")
                                           |
                           Rich live output  +  in-memory accumulation
                                           |
@@ -41,103 +62,106 @@ live to the terminal, and the full session is saved to a text file on exit.
 
 Two concurrent units, communicating through a thread-safe queue:
 
-1. **Capture thread** — `sounddevice.InputStream` callback pushes audio frames
-   (16 kHz, mono, float32) into a `queue.Queue`. Non-blocking; never touches the
-   model.
-2. **Main loop** — pulls frames, feeds them to silero-vad's `VADIterator`. On a
-   speech-end event, assembles the buffered speech samples into one utterance
-   array, calls `mlx_whisper.transcribe`, then renders + accumulates the result.
+1. **Capture thread** — `sounddevice.InputStream` callback pushes 16 kHz mono
+   float32 frames into a `queue.Queue`. Never touches the model.
+2. **Main loop** — pulls frames, drives mlx-audio's silero-vad to detect
+   speech start/end, assembles each completed utterance, calls mlx-audio
+   transcription, then renders + accumulates.
 
-Decoupling capture from transcription means audio keeps buffering while the model
-is busy on the previous utterance (no dropped speech).
+Decoupling capture from transcription keeps audio buffering while the model is
+busy on the previous utterance (no dropped speech).
 
 ## Components (single responsibility each)
 
 | Function | Input → Output | Depends on |
 |----------|----------------|-----------|
 | `mic_stream(queue)` | mic → 16 kHz float32 frames into queue | sounddevice |
-| `vad_segmenter(frames)` | frames → completed utterance buffers | silero-vad |
-| `transcribe(buffer)` | utterance buffer → Korean text + segments | mlx-whisper |
+| `vad_segmenter(frames)` | frames → completed utterance buffers | mlx-audio silero-vad |
+| `transcribe(buffer)` | utterance buffer → Korean text | mlx-audio (`generate_transcription`) |
 | `render_and_accumulate(text)` | text → live Rich line + history list | rich |
 | `save_session(history, path)` | history → `.txt` file | stdlib |
 
-`vad_segmenter` is the testable core (deterministic given audio frames). Mic and
-Rich are I/O boundaries.
+`vad_segmenter` is the testable core. Mic and Rich are I/O boundaries.
+
+## Open implementation question (verify, don't guess)
+
+The exact API for driving mlx-audio's MLX silero-vad over **streaming mic frames**
+(stateful start/end events vs. file-oriented) is not fully documented in the
+README. The implementation plan's first technical step is a spike: confirm the
+VAD streaming API from mlx-audio source/examples. Fallbacks if no frame-streaming
+API exists:
+- Accumulate a rolling buffer and run VAD on short windows to find boundaries, or
+- Run silero-vad on fixed ~1s windows and merge contiguous speech windows.
+
+Likewise confirm whether `generate_transcription` accepts an in-memory float32
+array directly or requires a temp `.wav`; if the latter, write the utterance to a
+tmp file before transcription.
 
 ## Data flow detail
 
-- **Sample rate:** 16 kHz mono (Whisper's native rate; no resampling needed).
-- **silero-vad:** use `VADIterator` which emits `{'start': ...}` / `{'end': ...}`
-  events on 512-sample (32 ms) chunks at 16 kHz. Buffer speech samples between
-  start and end; emit the buffer as one utterance on `end`.
-- **Min-utterance guard:** skip buffers shorter than ~0.3 s to avoid Whisper
-  hallucinating text on near-silent blips.
-- **Transcription:** `mlx_whisper.transcribe(audio_array, path_or_hf_repo=MODEL,
-  language="ko")`. Use `.text` (stripped). Drop empty results.
-- **Timestamp:** wall-clock `[HH:MM:SS]` at utterance start, prepended to each line.
+- **Sample rate:** 16 kHz mono (Whisper native; no resampling).
+- **Min-utterance guard:** skip buffers shorter than ~0.3 s (avoid hallucination
+  on near-silent blips).
+- **Transcription:** `generate_transcription(model=MODEL, audio=buf,
+  language="ko")`; use the text, dropped if empty.
+- **Timestamp:** wall-clock `[HH:MM:SS]` at utterance start, prepended per line.
 
 ## Output format
 
-Live terminal: each finalized utterance printed as `[HH:MM:SS] <text>` via Rich.
+Live terminal: `[HH:MM:SS] <text>` via Rich.
 
-Saved file `outputs/stt/YYYY-MM-DD-HHMMSS.txt`:
+Saved `outputs/stt/YYYY-MM-DD-HHMMSS.txt`:
 ```
 [14:03:12] 안녕하세요, 회의를 시작하겠습니다.
 [14:03:18] 오늘 안건은 세 가지입니다.
 ```
-`outputs/` is already gitignored, so sessions are not committed.
+`outputs/` is gitignored, so sessions are not committed.
 
 ## CLI
 
 Minimal flags (YAGNI):
 - `--language` (default `ko`)
-- `--model` (default `mlx-community/whisper-large-v3-mlx`)
+- `--model` (default `mlx-community/whisper-large-v3-turbo-asr-fp16`)
 - `--output-dir` (default `outputs/stt`)
 - `--no-save` (terminal only)
 
-Startup sequence: print "loading model…", load + warm up (first inference is slow),
-print "listening… (Ctrl+C to stop)", then enter the loop.
+Startup: print "loading model…", load + warm up, print "listening… (Ctrl+C to
+stop)", enter the loop.
 
 ## Error handling
 
-- **No microphone / sounddevice error:** catch on stream open, print a clear
-  message naming the likely cause (no input device / permission), exit non-zero.
-- **silero-vad model fetch:** small (~2 MB), torch.hub cache; surface download
-  errors plainly.
-- **Empty / hallucinated transcription:** min-utterance guard + drop empty text;
-  rely on VAD gating instead of feeding silence to Whisper.
-- **Ctrl+C:** treated as normal stop — flush any in-progress utterance, save, exit 0.
+- **No microphone / sounddevice error:** catch on stream open; clear message
+  (no input device / permission); exit non-zero.
+- **Model / VAD fetch:** HuggingFace cache; surface download errors plainly.
+- **Empty / hallucinated transcription:** min-utterance guard + drop empty text.
+- **Ctrl+C:** normal stop — flush in-progress utterance, save, exit 0.
 
 ## Testing
 
 Per project convention (test critical business logic only):
 
 - **Unit — `vad_segmenter`:** feed a known sample `.wav` (speech + silence gaps)
-  as frames; assert it emits the expected number of utterance buffers with
-  plausible lengths. This is the deterministic core.
-- **Smoke — `transcribe`:** run a short Korean sample `.wav` through
-  `mlx_whisper.transcribe`; assert non-empty text. (Marked slow / model-gated;
-  may be skipped in CI without the model cached.)
-- **Manual verification:** run the tool, speak a few Korean sentences, confirm
-  live terminal output and the saved `.txt` content. Capture terminal output as
-  evidence.
+  as frames; assert the expected number of utterance buffers. Deterministic core.
+- **Smoke — `transcribe`:** short Korean sample `.wav` → non-empty text.
+  (Slow / model-gated; skippable without model cached.)
+- **Manual verification:** run, speak Korean, confirm live terminal output and
+  saved `.txt`. Capture terminal output as evidence.
 
-## Files touched
+## Files
 
 New:
 - `stt-pipeline.py`
 - `outputs/stt/` (gitignored, created on first run)
 - test sample `.wav` + test file (location per writing-plans)
 
-Modified (coordinator-owned, batch-updated):
-- `requirements.txt` — add `mlx-whisper`, `sounddevice`, `silero-vad` (pulls torch)
-- `README.md` — new pipeline section, both Korean and English halves kept equivalent
-- `CLAUDE.md` — new pipeline entry under Architecture + Key Files
+Modified (already scaffolded in repo, updated for this design):
+- `requirements.txt` — `mlx-audio`, `sounddevice`, `rich` (no torch/silero-vad)
+- `README.md` — both Korean and English halves kept equivalent
+- `CLAUDE.md` — architecture + dependencies
 
 ## Process notes
 
-- **Issue-first:** per project workflow, register an English GitHub issue before
-  any code modification. The writing-plans phase folds issue creation in as the
-  first step.
-- **Dependency cost:** silero-vad adds PyTorch (~2 GB on disk). Acknowledged and
-  accepted for Korean VAD accuracy on a 128 GB machine.
+- **Issue-first:** GitHub issue #1 tracks implementation (English). Update it to
+  the mlx-audio-based approach.
+- **Dependency win:** PyTorch dependency eliminated — mlx-audio's silero-vad is
+  MLX-native. The repo stays a clean MLX stack.
