@@ -32,13 +32,18 @@ glue: mic capture (`sounddevice`, which mlx-audio lacks) + VAD segmentation loop
   speech, each completed utterance is transcribed (1–3s latency, stable text).
 - Two concurrent units: a capture thread fills the queue; the main loop runs VAD
   + transcription so audio keeps buffering while the model is busy.
-- Output: Rich live lines `[HH:MM:SS] text`, saved to
-  `outputs/stt/YYYY-MM-DD-HHMMSS.txt` on Ctrl+C.
+- Output: Rich live lines `[HH:MM:SS] text`, appended to
+  `outputs/stt/YYYY-MM-DD-HHMMSS.txt` per utterance (flushed immediately, so a
+  hard kill loses at most the in-flight utterance).
 
 ## Key Files
 
-- `stt-pipeline.py`: real-time STT pipeline. Thin wrapper over mlx-audio.
-- `docs/superpowers/specs/`: design specs.
+- `stt-pipeline.py`: CLI entry — args, mic capture thread, main loop, Rich render.
+- `segmenter.py`: `UtteranceSegmenter` — StreamingVad turn events → utterance buffers (unit-tested with an injected fake VAD).
+- `transcriber.py`: `Transcriber` — loads Whisper once, `model.generate` per utterance (avoids `generate_transcription`'s per-call file write).
+- `writer.py`: `TranscriptWriter` — lazy-create + append/flush each line.
+- `tests/`: unit tests for the segmenter and writer (model-free).
+- `docs/superpowers/`: specs and plans.
 
 ## README Convention
 
@@ -60,9 +65,15 @@ precede the issue; implementation follows it.
   recommended to avoid rate limits on first download.
 - Whisper is chunk-based, not streaming: never claim token-level real-time output.
 - Microphone requires macOS input permission for the terminal app.
-- The exact mlx-audio silero-vad streaming API must be confirmed from source
-  before implementing the segmenter (see spec "Open implementation question").
+- `mlx-community/whisper-large-v3-turbo` ships weights but no
+  `preprocessor_config.json`, so `Transcriber` injects a `WhisperProcessor` from
+  `openai/whisper-large-v3-turbo` after `load_model`. This requires `transformers`
+  (a transitive mlx-audio dep) and assumes the default model's architecture.
 
 ## Known Issues
 
-- (none yet — pre-implementation)
+- Custom `--model` uses the fixed `openai/whisper-large-v3-turbo` processor
+  fallback; a model with a different tokenizer would need processor handling
+  derived from its own id.
+- Whisper can misrecognize/hallucinate on fast speech or Korean/English
+  code-switching (model limitation, not a pipeline bug).

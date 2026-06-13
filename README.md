@@ -2,32 +2,26 @@
 
 [English](#english) | [한국어](#한국어)
 
-> 🚧 **In development / 개발 중** — design approved, implementation pending.
-> See [`docs/superpowers/specs/`](docs/superpowers/specs/) for the design.
+Local real-time Korean speech-to-text for Apple Silicon Macs. Microphone input is
+segmented by voice-activity detection and transcribed with Whisper (Metal GPU),
+printed live to the terminal and appended to a timestamped text file.
 
 ---
 
 ## 한국어
 
-Apple Silicon Mac에서 동작하는 **로컬 실시간 한국어 받아쓰기** 도구입니다.
-[`mlx-audio`](https://github.com/Blaizzy/mlx-audio) 라이브러리 위의 얇은
-래퍼로, 마이크 입력을 음성 활동 감지(VAD)로 발화 단위로 끊어 Whisper(Metal GPU
-가속)로 전사하고 터미널에 실시간 출력합니다. 세션 종료 시 타임스탬프가 붙은
-텍스트 파일로 저장합니다. **전사 전용**으로, LLM 분석 체인은 없습니다.
+### 기능
 
-### 바퀴를 재발명하지 않습니다
+- 실시간 마이크 받아쓰기 (한국어 기본, Whisper 99개 언어 지원)
+- `mlx-whisper` (`whisper-large-v3-turbo`) — Apple Silicon Metal GPU 가속
+- silero-VAD 발화 단위 분절 (PyTorch 불필요, MLX 네이티브)
+- 전사 결과를 발화마다 `outputs/stt/<날짜>.txt`에 즉시 기록 (강제 종료 시에도 유실 최소)
 
-엔진·VAD·스트리밍은 검증된 `mlx-audio`(~7k★, 유지보수 활발, MIT)에 위임하고,
-이 저장소는 **얇은 글루 코드만** 구현합니다 — 마이크 캡처(mlx-audio에 없는
-부분, `sounddevice`) + VAD 분절 루프 + Rich 출력 + 세션 저장.
+### 요구 사항
 
-### 특징
-
-- **mlx-audio** — Whisper STT 엔진(`whisper-large-v3-turbo`, Metal GPU)과
-  **MLX 네이티브 silero-vad** 제공 → **PyTorch 의존성 없음.**
-- **sounddevice** — 마이크 캡처(16kHz 모노).
-- 캡처 스레드 + 전사 루프 분리 — 모델이 바쁜 동안에도 음성 유실 없음.
-- Rich 실시간 출력 + `outputs/stt/*.txt` 자동 저장.
+- Apple Silicon Mac (M1 이상), macOS
+- Python 3.10+
+- 터미널의 마이크 접근 권한
 
 ### 설치
 
@@ -36,48 +30,52 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> 깔끔한 MLX 스택 — PyTorch 없음.
-
-### 사용 (예정)
+### 사용
 
 ```bash
-python3 stt-pipeline.py            # 실시간 받아쓰기 시작, Ctrl+C로 종료
-python3 stt-pipeline.py --no-save  # 파일 저장 없이 터미널만
+python3 stt-pipeline.py              # 실시간 받아쓰기 시작, Ctrl+C로 종료
+python3 stt-pipeline.py --no-save    # 파일 저장 없이 터미널만
 ```
 
-### 동작 원리
+| 옵션 | 기본값 | 설명 |
+|------|--------|------|
+| `--language` | `ko` | 언어 코드 |
+| `--model` | `mlx-community/whisper-large-v3-turbo` | STT 모델 ID |
+| `--output-dir` | `outputs/stt` | 전사 파일 저장 위치 |
+| `--no-save` | — | 파일 저장 안 함 |
 
-Whisper 계열은 30초 윈도우 단위로 완성된 오디오를 전사하는 구조라, 말하는 즉시
-글자가 흐르는 진짜 토큰 스트리밍은 설계상 불가능합니다. 이 도구는 VAD로 발화
-경계를 감지해, 한 발화가 끝나면 그 구간을 전사하는 방식으로 "실시간"을
-구현합니다(지연 1~3초, 텍스트가 흔들리지 않음).
+### 출력
+
+발화마다 `[HH:MM:SS] 텍스트` 한 줄이 터미널에 표시되고 동시에
+`outputs/stt/YYYY-MM-DD-HHMMSS.txt`에 추가됩니다.
+
+### 동작 방식
+
+Whisper는 30초 윈도우 단위로 완성된 오디오를 전사하는 모델이라 글자 단위
+실시간 스트리밍은 불가능합니다. 대신 VAD로 발화 경계(침묵)를 감지해, 한 발화가
+끝나면 그 구간을 전사합니다. 지연은 한 문장 길이(약 1~3초)입니다.
+
+### 한계
+
+- 빠른 발화나 한국어/영어 혼용 구간에서 오인식·환각이 발생할 수 있습니다.
+- 첫 실행 시 Whisper/VAD 모델을 HuggingFace에서 내려받습니다 (`HF_TOKEN` 권장).
 
 ---
 
 ## English
 
-A **local real-time Korean speech-to-text** tool for Apple Silicon Macs. A thin
-wrapper over the [`mlx-audio`](https://github.com/Blaizzy/mlx-audio) library:
-microphone input is segmented into utterances by voice-activity detection (VAD),
-each utterance is transcribed with Whisper (Metal GPU accelerated) and printed
-live to the terminal. On exit the full session is saved to a timestamped text
-file. **Transcription only** — no LLM analysis chain.
-
-### Don't reinvent the wheel
-
-Engine, VAD, and streaming are delegated to the maintained `mlx-audio` (~7k★,
-MIT). This repo implements only the thin glue: microphone capture (which
-mlx-audio lacks, via `sounddevice`) + a VAD segmentation loop + Rich output +
-session save.
-
 ### Features
 
-- **mlx-audio** — provides the Whisper STT engine (`whisper-large-v3-turbo`,
-  Metal GPU) and an **MLX-native silero-vad** → **no PyTorch dependency.**
-- **sounddevice** — microphone capture (16kHz mono).
-- Capture thread decoupled from the transcription loop — no dropped speech while
-  the model is busy.
-- Rich live output + automatic `outputs/stt/*.txt` save.
+- Real-time microphone transcription (Korean by default; Whisper supports 99 languages)
+- `mlx-whisper` (`whisper-large-v3-turbo`) — Metal GPU accelerated on Apple Silicon
+- silero-VAD utterance segmentation (MLX-native, no PyTorch)
+- Each utterance is appended to `outputs/stt/<timestamp>.txt` immediately (minimal loss on hard kill)
+
+### Requirements
+
+- Apple Silicon Mac (M1 or later), macOS
+- Python 3.10+
+- Microphone permission for your terminal
 
 ### Install
 
@@ -86,18 +84,33 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> Clean MLX stack — no PyTorch.
-
-### Usage (planned)
+### Usage
 
 ```bash
-python3 stt-pipeline.py            # start real-time transcription, Ctrl+C to stop
-python3 stt-pipeline.py --no-save  # terminal only, no file save
+python3 stt-pipeline.py              # start real-time transcription, Ctrl+C to stop
+python3 stt-pipeline.py --no-save    # terminal only, no file
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--language` | `ko` | Language code |
+| `--model` | `mlx-community/whisper-large-v3-turbo` | STT model id |
+| `--output-dir` | `outputs/stt` | Where transcripts are saved |
+| `--no-save` | — | Do not save a file |
+
+### Output
+
+Each utterance is printed as `[HH:MM:SS] text` and appended at the same time to
+`outputs/stt/YYYY-MM-DD-HHMMSS.txt`.
 
 ### How it works
 
-Whisper-family models transcribe completed 30-second audio windows, so true
-token-level streaming (letters flowing as you speak) is not possible by design.
-This tool implements "real-time" by detecting utterance boundaries with VAD and
-transcribing each utterance once it ends (1–3s latency, no text flicker).
+Whisper transcribes completed 30-second audio windows, so character-level
+streaming is not possible. Instead, VAD detects utterance boundaries (silence)
+and each utterance is transcribed once it ends. Latency is roughly one sentence
+(about 1–3s).
+
+### Limitations
+
+- Fast speech or Korean/English code-switching can cause misrecognition or hallucination.
+- The first run downloads the Whisper/VAD models from HuggingFace (`HF_TOKEN` recommended).
