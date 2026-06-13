@@ -1,0 +1,4 @@
+mlx-whisper
+sounddevice
+silero-vad
+rich
