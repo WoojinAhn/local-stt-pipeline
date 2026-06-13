@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 from rich.console import Console
+from rich.markup import escape
 
 from mlx_audio.realtime_vad import ServerVadConfig, StreamingVad
 from mlx_audio.vad import load as load_vad
@@ -74,7 +75,7 @@ def main():
                     text = transcriber.transcribe(utterance)
                     if text:
                         ts = datetime.now().strftime("%H:%M:%S")
-                        console.print(f"[dim]\\[{ts}][/dim] {text}")
+                        console.print(f"[dim]\\[{ts}][/dim] {escape(text)}")
                         history.append((ts, text))
     except KeyboardInterrupt:
         console.print("\n[cyan]stopped.[/cyan]")

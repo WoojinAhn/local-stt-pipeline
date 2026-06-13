@@ -53,3 +53,21 @@ def test_min_utterance_guard_drops_short_blip():
 def test_no_events_yields_nothing():
     seg = UtteranceSegmenter(FakeVad({}), pre_roll_ms=0, min_utterance_ms=0)
     assert seg.feed(np.ones(1600, dtype=np.float32)) == []
+
+
+def test_pre_roll_prepends_audio_before_speech_start():
+    # 16000 samples/sec; 1600-sample chunks = 100 ms each.
+    chunk = np.ones(1600, dtype=np.float32)
+    # pre_roll_ms=100 keeps the most recent 1600 samples as pre-roll.
+    vad = FakeVad({2: [_started()], 4: [_stopped()]})
+    seg = UtteranceSegmenter(vad, pre_roll_ms=100, min_utterance_ms=0)
+
+    completed = []
+    for _ in range(6):
+        completed.extend(seg.feed(chunk))
+
+    assert len(completed) == 1
+    # chunks 0,1 build the tail; on chunk 2 STARTED seeds utterance with the
+    # last 100ms (1 chunk) of pre-roll, then chunks 2,3 are appended before
+    # STOPPED fires on chunk 4 -> 1 (pre-roll) + 2 = 3 chunks.
+    assert completed[0].shape[0] == 1600 * 3
