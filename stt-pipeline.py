@@ -9,7 +9,6 @@ import argparse
 import queue
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
@@ -20,6 +19,7 @@ from mlx_audio.realtime_vad import ServerVadConfig, StreamingVad
 from mlx_audio.vad import load as load_vad
 from segmenter import VAD_SAMPLE_RATE, UtteranceSegmenter
 from transcriber import DEFAULT_MODEL, Transcriber
+from writer import TranscriptWriter
 
 VAD_MODEL = "mlx-community/silero-vad"
 BLOCK_SIZE = 1600  # 100 ms chunks at 16 kHz
@@ -34,15 +34,6 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
-def save_session(history, output_dir: str) -> Path:
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    path = out_dir / f"{stamp}.txt"
-    path.write_text("".join(f"[{ts}] {text}\n" for ts, text in history), encoding="utf-8")
-    return path
-
-
 def main():
     args = parse_args()
     console = Console()
@@ -51,6 +42,7 @@ def main():
     vad = StreamingVad(load_vad(VAD_MODEL), ServerVadConfig())
     segmenter = UtteranceSegmenter(vad)
     transcriber = Transcriber(args.model, args.language)
+    writer = TranscriptWriter(args.output_dir, enabled=not args.no_save)
 
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
 
@@ -59,7 +51,6 @@ def main():
             console.print(f"[yellow]{status}[/yellow]")
         audio_q.put(indata[:, 0].copy())
 
-    history = []
     console.print("[green]listening… (Ctrl+C to stop)[/green]")
     try:
         with sd.InputStream(
@@ -76,17 +67,18 @@ def main():
                     if text:
                         ts = datetime.now().strftime("%H:%M:%S")
                         console.print(f"[dim]\\[{ts}][/dim] {escape(text)}")
-                        history.append((ts, text))
+                        writer.write_line(ts, text)
     except KeyboardInterrupt:
         console.print("\n[cyan]stopped.[/cyan]")
     except sd.PortAudioError as exc:
         console.print(f"[red]microphone error:[/red] {exc}")
         console.print("[red]check the input device and macOS microphone permission.[/red]")
         sys.exit(1)
+    finally:
+        writer.close()
 
-    if not args.no_save and history:
-        path = save_session(history, args.output_dir)
-        console.print(f"[green]saved:[/green] {path}")
+    if writer.path:
+        console.print(f"[green]saved:[/green] {writer.path}")
 
 
 if __name__ == "__main__":
